@@ -1,8 +1,11 @@
-//! Pure frame-selection helpers: which sampled frames survive, and for how long.
+//! Pure, `ffmpeg`-free frame-selection logic: which sampled frames survive a stream, and
+//! for how long.
 //!
-//! Every function here takes ownership of (or borrows) a list of [`Sampled`] items and
-//! returns a new list; none of them touch `ffmpeg`, a file, or the network, so they are
-//! unit-tested with synthetic hashes in [`tests`].
+//! [`Dedupe`] is driven one hash at a time (by [`crate::decode`], as frames are decoded,
+//! so no raw pixel buffer outlives the frame that produced it) and is unit-tested the
+//! same way. Every other item here takes ownership of (or borrows) a list of [`Sampled`]
+//! items and returns a new list; none of them touch `ffmpeg`, a file, or the network, so
+//! they are unit-tested with synthetic hashes in [`tests`].
 
 use image_hasher::ImageHash;
 
@@ -10,7 +13,8 @@ use image_hasher::ImageHash;
 pub(crate) type Hash = ImageHash<Box<[u8]>>;
 
 /// One sampled frame carrying just enough to decide whether it survives, plus an
-/// opaque `payload` (raw pixels in the real pipeline, `()` in tests).
+/// opaque `payload` (an encoded JPEG plus its dimensions in the real pipeline, `()` in
+/// tests).
 #[derive(Clone, Debug)]
 pub(crate) struct Sampled<P> {
     pub ts_ms: u64,
@@ -18,23 +22,36 @@ pub(crate) struct Sampled<P> {
     pub payload: P,
 }
 
-/// Keep the first frame, and any later frame whose hash differs from the **last kept**
-/// frame by at least `threshold`. Returns the survivors and how many were dropped.
-pub(crate) fn keep<P>(sampled: Vec<Sampled<P>>, threshold: u32) -> (Vec<Sampled<P>>, usize) {
-    let mut kept: Vec<Sampled<P>> = Vec::with_capacity(sampled.len());
-    let mut dropped = 0usize;
-    for candidate in sampled {
-        let is_new = match kept.last() {
-            None => true,
-            Some(last) => last.hash.dist(&candidate.hash) >= threshold,
-        };
-        if is_new {
-            kept.push(candidate);
-        } else {
-            dropped += 1;
+/// Streaming near-duplicate filter: keeps the first hash it sees, and any later one
+/// that differs from the last **kept** hash by at least `threshold`. Holding only the
+/// last kept hash (not the whole history) is what lets [`crate::decode`] decide
+/// keep-or-drop one frame at a time, before it has to hold more than one frame's pixels
+/// in memory.
+pub(crate) struct Dedupe {
+    threshold: u32,
+    last_kept: Option<Hash>,
+}
+
+impl Dedupe {
+    pub(crate) fn new(threshold: u32) -> Self {
+        Self {
+            threshold,
+            last_kept: None,
         }
     }
-    (kept, dropped)
+
+    /// Returns `true` when `hash` should be kept, and remembers it as the new "last
+    /// kept" hash that later candidates are compared against.
+    pub(crate) fn consider(&mut self, hash: &Hash) -> bool {
+        let is_new = match &self.last_kept {
+            None => true,
+            Some(last) => last.dist(hash) >= self.threshold,
+        };
+        if is_new {
+            self.last_kept = Some(hash.clone());
+        }
+        is_new
+    }
 }
 
 /// `held_ms` for each kept frame: the next frame's `ts_ms` minus this one's; the last
@@ -111,6 +128,19 @@ pub(crate) fn thin<P>(mut kept: Vec<Sampled<P>>, max_frames: usize) -> (Vec<Samp
         }
     }
     (kept, dropped)
+}
+
+/// If `kept` has grown past `cap`, thin it back down right away using the same rule as
+/// the final pass (never the first frame, never the current last). Called by
+/// [`crate::decode`] after every frame it keeps, so a long clip cannot accumulate
+/// encoded frames without bound while it is still being decoded. Returns the
+/// possibly-thinned list and how many frames this call dropped (always 0 below `cap`).
+pub(crate) fn thin_incremental<P>(kept: Vec<Sampled<P>>, cap: usize) -> (Vec<Sampled<P>>, usize) {
+    if kept.len() > cap {
+        thin(kept, cap)
+    } else {
+        (kept, 0)
+    }
 }
 
 #[cfg(test)]

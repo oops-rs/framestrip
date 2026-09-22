@@ -2,7 +2,10 @@
 //! are crafted byte patterns so distances are known in advance.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
-use super::{Hash, Sampled, distances_from_previous, hold_durations, keep, merge_flicker, thin};
+use super::{
+    Dedupe, Hash, Sampled, distances_from_previous, hold_durations, merge_flicker, thin,
+    thin_incremental,
+};
 
 /// Build a single-byte synthetic hash. Hamming distance between two of these is the
 /// popcount of their XOR, i.e. 0..=8.
@@ -18,55 +21,94 @@ fn sample(ts_ms: u64, byte: u8) -> Sampled<()> {
     }
 }
 
-// ---- keep ----
+// ---- Dedupe ----
 
 #[test]
-fn keep_always_keeps_the_first_frame() {
-    let (kept, dropped) = keep(vec![sample(0, 0x00)], 4);
-    assert_eq!(kept.len(), 1);
-    assert_eq!(dropped, 0);
+fn dedupe_always_keeps_the_first_hash() {
+    let mut dedupe = Dedupe::new(4);
+    assert!(dedupe.consider(&hash(0x00)));
 }
 
 #[test]
-fn keep_handles_empty_input() {
-    let (kept, dropped) = keep(Vec::<Sampled<()>>::new(), 4);
-    assert!(kept.is_empty());
-    assert_eq!(dropped, 0);
+fn dedupe_drops_near_duplicates_of_the_last_kept_hash() {
+    // 0x00, 0x00, 0x00: every later hash is identical to the last kept one (distance 0).
+    let mut dedupe = Dedupe::new(4);
+    assert!(dedupe.consider(&hash(0x00)));
+    assert!(!dedupe.consider(&hash(0x00)));
+    assert!(!dedupe.consider(&hash(0x00)));
 }
 
 #[test]
-fn keep_drops_near_duplicates_of_the_last_kept_frame() {
-    // 0x00, 0x00, 0x00: every later frame is identical to the last kept one (distance 0).
-    let sampled = vec![sample(0, 0x00), sample(100, 0x00), sample(200, 0x00)];
-    let (kept, dropped) = keep(sampled, 4);
-    assert_eq!(kept.iter().map(|s| s.ts_ms).collect::<Vec<_>>(), vec![0]);
-    assert_eq!(dropped, 2);
-}
-
-#[test]
-fn keep_keeps_a_frame_whose_distance_meets_the_threshold() {
+fn dedupe_keeps_a_hash_whose_distance_meets_the_threshold() {
     // dist(0x00, 0xFF) == 8 >= 4.
-    let sampled = vec![sample(0, 0x00), sample(100, 0xFF)];
-    let (kept, dropped) = keep(sampled, 4);
-    assert_eq!(
-        kept.iter().map(|s| s.ts_ms).collect::<Vec<_>>(),
-        vec![0, 100]
-    );
+    let mut dedupe = Dedupe::new(4);
+    assert!(dedupe.consider(&hash(0x00)));
+    assert!(dedupe.consider(&hash(0xFF)));
+}
+
+#[test]
+fn dedupe_compares_against_the_last_kept_hash_not_the_first() {
+    // A(0x00) -> B(0x0F, dist 4 from A, kept) -> C(0x00, dist 4 from B, kept).
+    // If `Dedupe` mistakenly compared against the *first* hash instead of the *last
+    // kept* one, C (identical to A) would be dropped.
+    let mut dedupe = Dedupe::new(4);
+    assert!(dedupe.consider(&hash(0x00)));
+    assert!(dedupe.consider(&hash(0x0F)));
+    assert!(dedupe.consider(&hash(0x00)));
+}
+
+// ---- thin_incremental ----
+
+#[test]
+fn thin_incremental_is_a_no_op_within_the_cap() {
+    let kept = vec![sample(0, 0x00), sample(1, 0x11), sample(2, 0x22)];
+    let (kept, dropped) = thin_incremental(kept, 5);
+    assert_eq!(kept.len(), 3);
     assert_eq!(dropped, 0);
 }
 
 #[test]
-fn keep_compares_against_the_last_kept_frame_not_the_first() {
-    // A(0x00) -> B(0x0F, dist 4 from A, kept) -> C(0x00, dist 4 from B, kept).
-    // If `keep` mistakenly compared against the *first* frame instead of the *last
-    // kept* one, C (identical to A) would be dropped.
-    let sampled = vec![sample(0, 0x00), sample(100, 0x0F), sample(200, 0x00)];
-    let (kept, dropped) = keep(sampled, 4);
+fn thin_incremental_bounds_a_long_in_flight_stream() {
+    // Simulates what `decode::sample_frames` does per real frame: run every candidate
+    // through `Dedupe`, and thin the in-flight list back down the moment it exceeds the
+    // cap. Every hash alternates far enough apart (distance 8) that `Dedupe` (threshold
+    // 1) keeps all of them, so this exercises only the incremental-cap mechanism.
+    let cap = 4usize;
+    let mut dedupe = Dedupe::new(1);
+    let mut kept: Vec<Sampled<u64>> = Vec::new();
+    let mut dropped_by_cap = 0usize;
+
+    for i in 0..20u64 {
+        let byte = if i % 2 == 0 { 0x00 } else { 0xFF };
+        let candidate = Sampled {
+            ts_ms: i * 100,
+            hash: hash(byte),
+            payload: i,
+        };
+        if dedupe.consider(&candidate.hash) {
+            kept.push(candidate);
+            let (thinned, dropped) = thin_incremental(kept, cap);
+            kept = thinned;
+            dropped_by_cap += dropped;
+            assert!(
+                kept.len() <= cap,
+                "the in-flight list must never exceed the incremental cap"
+            );
+        }
+    }
+
+    assert_eq!(kept.len(), cap);
+    assert_eq!(dropped_by_cap, 20 - cap);
     assert_eq!(
-        kept.iter().map(|s| s.ts_ms).collect::<Vec<_>>(),
-        vec![0, 100, 200]
+        kept.first().map(|s| s.payload),
+        Some(0),
+        "the very first kept frame is protected on every incremental pass"
     );
-    assert_eq!(dropped, 0);
+    assert_eq!(
+        kept.last().map(|s| s.payload),
+        Some(19),
+        "the most recently kept frame was never thinned after it was pushed"
+    );
 }
 
 // ---- hold_durations ----

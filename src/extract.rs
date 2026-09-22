@@ -2,9 +2,9 @@
 
 use std::path::Path;
 
-use crate::decode::sample_frames;
+use crate::decode::{DecodeOutput, sample_frames};
 use crate::probe::probe;
-use crate::select::{distances_from_previous, hold_durations, keep, merge_flicker, thin};
+use crate::select::{distances_from_previous, hold_durations, merge_flicker, thin};
 use crate::{Error, Options, Strip, encode};
 
 /// Decode, sample, deduplicate, cap, and encode. Blocking; run it off any async executor.
@@ -24,17 +24,20 @@ pub fn extract(path: &Path, options: &Options) -> Result<Strip, Error> {
         }
     }
 
-    let sampled = sample_frames(path, options)?;
-    let sampled_count = sampled.len();
+    let DecodeOutput {
+        kept,
+        sampled: sampled_count,
+        dropped_as_duplicate: dropped_duplicates,
+        dropped_by_cap: dropped_by_incremental_cap,
+    } = sample_frames(path, options)?;
 
-    let (kept, dropped_duplicates) = keep(sampled, options.hash_threshold);
     let (kept, dropped_flicker) = merge_flicker(
         kept,
         options.hash_threshold,
         options.min_hold_ms,
         probe.duration_ms,
     );
-    let (kept, dropped_by_cap) = thin(kept, options.max_frames);
+    let (kept, dropped_by_final_cap) = thin(kept, options.max_frames);
 
     let holds = hold_durations(&kept, probe.duration_ms);
     let distances = distances_from_previous(&kept);
@@ -45,16 +48,16 @@ pub fn extract(path: &Path, options: &Options) -> Result<Strip, Error> {
         .zip(distances)
         .enumerate()
         .map(|(index, ((sampled, held_ms), distance))| {
-            encode::to_frame(index, sampled, held_ms, distance, options.jpeg_quality)
+            encode::to_frame(index, sampled, held_ms, distance)
         })
-        .collect::<Result<Vec<_>, Error>>()?;
+        .collect();
 
     Ok(Strip {
         probe,
         frames,
         sampled: sampled_count,
         dropped_as_duplicate: dropped_duplicates + dropped_flicker,
-        dropped_by_cap,
+        dropped_by_cap: dropped_by_incremental_cap + dropped_by_final_cap,
     })
 }
 
