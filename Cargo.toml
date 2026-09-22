@@ -1,0 +1,29 @@
+[package]
+name = "keyframe"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+license = "MIT OR Apache-2.0"
+description = "Turn a video into a short, deduplicated, timestamped frame strip using the system ffmpeg"
+repository = "https://github.com/oops-rs/keyframe"
+keywords = ["video", "ffmpeg", "keyframe", "perceptual-hash"]
+categories = ["multimedia::video"]
+
+[dependencies]
+ffmpeg-sidecar = { version = "2", default-features = false }
+image = { version = "0.25", default-features = false, features = ["jpeg"] }
+image_hasher = "3"
+thiserror = "2"
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints.rust]
+missing_docs = "deny"
+unsafe_code = "forbid"
+
+[lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
