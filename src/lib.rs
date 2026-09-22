@@ -6,10 +6,31 @@
 //! smallest transitions, and returns each kept frame as JPEG with its source
 //! timestamp and hold duration.
 //!
-//! API stub — see the spec (nous `docs/spec/2026-09-22-video-evidence.md` §2).
+//! ```no_run
+//! # fn main() -> Result<(), keyframe::Error> {
+//! let strip = keyframe::extract(std::path::Path::new("recording.mp4"), &keyframe::Options::default())?;
+//! for frame in &strip.frames {
+//!     println!("t={}ms held={}ms {} bytes", frame.ts_ms, frame.held_ms, frame.bytes.len());
+//! }
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! See the spec (nous `docs/spec/2026-09-22-video-evidence.md` §2) for the normative
+//! contract this crate implements.
 
-use std::path::Path;
 use std::time::Duration;
+
+mod decode;
+mod encode;
+mod extract;
+mod probe;
+mod select;
+mod tooling;
+
+pub use extract::extract;
+pub use probe::{Probe, probe};
+pub use tooling::{Tooling, tooling};
 
 /// Extraction parameters.
 #[derive(Clone, Debug, PartialEq)]
@@ -18,7 +39,7 @@ pub struct Options {
     pub sample_fps: f32,
     /// Width of emitted frames; height follows the aspect ratio (even).
     pub max_width: u32,
-    /// Minimum Hamming distance (8×8 DoubleGradient hash) for a frame to count as new.
+    /// Minimum Hamming distance (8×8 `DoubleGradient` hash) for a frame to count as new.
     pub hash_threshold: u32,
     /// Hard cap on emitted frames; the smallest transitions are dropped first.
     pub max_frames: usize,
@@ -45,23 +66,6 @@ impl Default for Options {
             max_duration_ms: Some(600_000),
         }
     }
-}
-
-/// What `ffprobe` reported about the input.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Probe {
-    /// Container duration, when known.
-    pub duration_ms: Option<u64>,
-    /// Source width in pixels.
-    pub width: u32,
-    /// Source height in pixels.
-    pub height: u32,
-    /// Video codec name, e.g. `h264` or `hevc`.
-    pub codec: String,
-    /// ffprobe `format_name`, e.g. `mov,mp4,m4a,3gp,3g2,mj2`.
-    pub container: String,
-    /// Average source frame rate, when known.
-    pub avg_fps: Option<f32>,
 }
 
 /// One kept frame.
@@ -93,6 +97,7 @@ impl std::fmt::Debug for Frame {
             .field("held_ms", &self.held_ms)
             .field("width", &self.width)
             .field("height", &self.height)
+            .field("media_type", &self.media_type)
             .field("byte_size", &self.bytes.len())
             .field("distance_from_previous", &self.distance_from_previous)
             .finish()
@@ -141,41 +146,4 @@ pub enum Error {
     /// The options are unusable (non-positive rate, zero cap, …).
     #[error("invalid options: {0}")]
     Options(String),
-}
-
-/// The resolved decoder binaries.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Tooling {
-    /// Path of the `ffmpeg` binary.
-    pub ffmpeg: std::path::PathBuf,
-    /// Path of the `ffprobe` binary.
-    pub ffprobe: std::path::PathBuf,
-    /// First line of `ffmpeg -version`.
-    pub version: String,
-}
-
-/// Locate and verify `ffmpeg`/`ffprobe` once; later calls return the cached result.
-///
-/// # Errors
-/// [`Error::ToolingUnavailable`] when either binary is missing or does not run.
-pub fn tooling() -> Result<Tooling, Error> {
-    Err(Error::ToolingUnavailable("not implemented".to_owned()))
-}
-
-/// Probe a video without decoding it.
-///
-/// # Errors
-/// [`Error::ToolingUnavailable`], [`Error::Undecodable`], [`Error::Io`].
-pub fn probe(path: &Path) -> Result<Probe, Error> {
-    let _ = path;
-    Err(Error::ToolingUnavailable("not implemented".to_owned()))
-}
-
-/// Decode, sample, deduplicate, cap, and encode. Blocking; run it off any async executor.
-///
-/// # Errors
-/// Every [`Error`] variant.
-pub fn extract(path: &Path, options: &Options) -> Result<Strip, Error> {
-    let _ = (path, options);
-    Err(Error::ToolingUnavailable("not implemented".to_owned()))
 }
