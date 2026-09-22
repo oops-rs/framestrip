@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
-use keyframe::{Options, extract};
+use framestrip::{Options, extract};
 
 fn main() -> ExitCode {
     let mut args = env::args().skip(1);

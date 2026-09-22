@@ -1,6 +1,6 @@
 //! Integration tests against real `ffmpeg`-generated fixtures.
 //!
-//! Every test calls [`keyframe::tooling`] first and skips (with an `eprintln!`, not a
+//! Every test calls [`framestrip::tooling`] first and skips (with an `eprintln!`, not a
 //! failure) when `ffmpeg`/`ffprobe` are unavailable, so CI without them stays green and
 //! CI with them exercises the real decode path.
 #![allow(clippy::unwrap_used, clippy::expect_used)]
@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
-use keyframe::{Error, Options, extract, tooling};
+use framestrip::{Error, Options, extract, tooling};
 
 /// Returns `false` (and prints why) when `ffmpeg`/`ffprobe` are not usable here.
 fn require_tooling() -> bool {

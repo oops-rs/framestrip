@@ -7,8 +7,8 @@
 //! timestamp and hold duration.
 //!
 //! ```no_run
-//! # fn main() -> Result<(), keyframe::Error> {
-//! let strip = keyframe::extract(std::path::Path::new("recording.mp4"), &keyframe::Options::default())?;
+//! # fn main() -> Result<(), framestrip::Error> {
+//! let strip = framestrip::extract(std::path::Path::new("recording.mp4"), &framestrip::Options::default())?;
 //! for frame in &strip.frames {
 //!     println!("t={}ms held={}ms {} bytes", frame.ts_ms, frame.held_ms, frame.bytes.len());
 //! }

@@ -1,11 +1,11 @@
 [package]
-name = "keyframe"
+name = "framestrip"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-license = "MIT OR Apache-2.0"
+license = "MIT"
 description = "Turn a video into a short, deduplicated, timestamped frame strip using the system ffmpeg"
-repository = "https://github.com/oops-rs/keyframe"
+repository = "https://github.com/oops-rs/framestrip"
 keywords = ["video", "ffmpeg", "keyframe", "perceptual-hash"]
 categories = ["multimedia::video"]
 
