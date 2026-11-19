@@ -157,7 +157,7 @@ fn hevc_decodes() {
         "expected an hevc codec name, got {:?}",
         strip.probe.codec
     );
-    assert!(!strip.frames.is_empty());
+    assert_ne!(strip.frames.len(), 0, "expected at least one frame");
 }
 
 #[test]

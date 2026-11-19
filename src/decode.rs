@@ -66,7 +66,7 @@ pub(crate) fn sample_frames(path: &Path, options: &Options) -> Result<DecodeOutp
     let filter = format!("fps={},scale={}:-2", options.sample_fps, options.max_width);
     let mut command = FfmpegCommand::new_with_path(&tools.ffmpeg);
     command
-        .input(path.to_string_lossy())
+        .input(&*path.to_string_lossy())
         .args(["-vf", &filter])
         .rawvideo();
 
